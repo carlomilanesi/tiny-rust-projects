@@ -1,0 +1,8 @@
+-V
+--edition=2222
+
+out:Options { verbose: true, crate_name: None, edition: Some(2222), error_format: Text, input: [] }
+err:
+
+out:Options { verbose: false, crate_name: None, edition: None, error_format: Text, input: [] }
+err:

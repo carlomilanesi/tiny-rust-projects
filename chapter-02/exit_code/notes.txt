@@ -1,0 +1,42 @@
+abort()     -1073740791
+
+1.
+Good!
+0
+2.
+-1073740791
+3.
+thread 'main' panicked at 'Ouch!', src\main.rs:49:21
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+101
+4.
+0
+5.
+1
+6.
+42
+7.
+Good!
+0
+8.
+Error: invalid arguments.
+1
+9.
+Error: too much input data.
+42
+10.
+-1073740791
+11.
+-1073740791
+12.
+thread 'main' panicked at 'explicit panic', src\main.rs:51:21
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+101
+13.
+-1073740791
+14.
+-1073740791
+15.
+-1073740791
+16.
+-1073740791

@@ -1,0 +1,8 @@
+cols142 rows27
+down
+down
+down
+up
+up
+up
+esc
