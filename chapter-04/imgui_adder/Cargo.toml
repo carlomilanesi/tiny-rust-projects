@@ -1,0 +1,9 @@
+[package]
+name = "gui_adder"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.18.0"
+egui_extras = { version = "0.18.0", features = ["image"] }
+image = { version = "0.24", default-features = false, features = ["png"] }
