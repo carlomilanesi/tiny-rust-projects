@@ -1,0 +1,7 @@
+[package]
+name = "workbook_write"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+simple_excel_writer = "0.2.0"

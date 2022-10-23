@@ -1,0 +1,19 @@
+<html>
+
+<body>
+    <h1>Persons</h1>
+    <ul>
+        {{for p in persons}}
+        <li>
+            {p.first_name}
+            {{if p.middle_initial}}
+            {p.middle_initial}.
+            {{endif}}
+            {p.last_name}
+            was born in {p.birth_year};
+        </li>
+        {{endfor}}
+    </ul>
+</body>
+
+</html>
