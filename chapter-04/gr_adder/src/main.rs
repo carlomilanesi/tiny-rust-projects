@@ -7,15 +7,15 @@ use speedy2d::{Graphics2D, Window};
 
 struct AdderData {
     max_num_digits: usize,
-    addend_1: String,
-    addend_2: String,
-    sum: String,
-    cursor_at_1: bool,
     scale: f32,
     addend_1_label: String,
     addend_2_label: String,
     sum_label: String,
     font: Font,
+    addend_1: String,
+    addend_2: String,
+    sum: String,
+    cursor_at_1: bool,
 }
 
 impl AdderData {
@@ -59,24 +59,23 @@ impl AdderData {
         self.scale * 0.2
     }
 
-    fn border_width(&self) -> f32 {
-        self.scale / 20.
-    }
-
-    fn compute_sum(&mut self) {
-        self.sum = "---".to_string();
-        if let Ok(addend_1) = self.addend_1.parse::<u64>() {
-            if let Ok(addend_2) = self.addend_2.parse::<u64>() {
-                self.sum = (addend_1 + addend_2).to_string()
-            }
-        }
-    }
-
     fn labels_width(&self) -> f32 {
-        self.font
+        let addend_1_width = self
+            .font
+            .layout_text(&self.addend_1_label, self.scale, TextOptions::new())
+            .size()
+            .x;
+        let addend_2_width = self
+            .font
             .layout_text(&self.addend_2_label, self.scale, TextOptions::new())
             .size()
-            .x
+            .x;
+        let sum_width = self
+            .font
+            .layout_text(&self.sum_label, self.scale, TextOptions::new())
+            .size()
+            .x;
+        addend_1_width.max(addend_2_width.max(sum_width))
     }
 
     fn fields_width(&self) -> f32 {
@@ -107,6 +106,17 @@ impl AdderData {
             + (self.top_padding() + self.bottom_padding() + digit_size.y) * 3.;
 
         (dx as u32, dy as u32)
+    }
+
+    fn border_width(&self) -> f32 {
+        self.scale / 20.
+    }
+
+    fn compute_sum(&mut self) {
+        self.sum = "---".to_string();
+        let Ok(addend_1) = self.addend_1.parse::<u64>() else { return };
+        let Ok(addend_2) = self.addend_2.parse::<u64>() else { return };
+        self.sum = (addend_1 + addend_2).to_string()
     }
 }
 
@@ -352,15 +362,15 @@ impl WindowHandler for AdderData {
 fn main() {
     let adder_data = AdderData {
         max_num_digits: 18,
-        addend_1: "".to_string(),
-        addend_2: "".to_string(),
-        sum: "".to_string(),
-        cursor_at_1: true,
         scale: 20.,
         addend_1_label: "Addend 1:".to_string(),
         addend_2_label: "Addend 2:".to_string(),
         sum_label: "Sum:".to_string(),
         font: Font::new(include_bytes!("../assets/LiberationSans-Regular.ttf")).unwrap(),
+        addend_1: "".to_string(),
+        addend_2: "".to_string(),
+        sum: "".to_string(),
+        cursor_at_1: true,
     };
     let window = Window::new_centered("Adder", adder_data.compute_size()).unwrap();
     window.run_loop(adder_data);

@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use eframe::{egui, epaint::Vec2};
+use eframe::{egui, epaint::Vec2, Theme};
 
 fn main() {
     eframe::run_native(
@@ -8,6 +8,7 @@ fn main() {
         eframe::NativeOptions {
             initial_window_size: Some(Vec2::new(250., 100.)),
             resizable: false,
+            default_theme: Theme::Light,
             ..Default::default()
         },
         Box::new(|_| {
