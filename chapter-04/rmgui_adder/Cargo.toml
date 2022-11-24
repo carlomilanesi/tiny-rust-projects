@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gtk = "0.15.5"
+gdk = "0.16.0"
+gdk-pixbuf = "0.16.3"
+gtk = "0.16.1"
