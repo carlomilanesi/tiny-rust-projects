@@ -19,11 +19,6 @@ fn get_program_path() -> String {
 fn terminate_with_success() {
     let out = std::process::Command::new(&get_program_path())
         .arg("success")
-        .output();
-    dbg!(out);
-
-    let out = std::process::Command::new(&get_program_path())
-        .arg("success")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
