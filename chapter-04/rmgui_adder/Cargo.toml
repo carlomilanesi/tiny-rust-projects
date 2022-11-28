@@ -4,4 +4,4 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gtk = "0.15.5"
+gtk = "0.16.1"
