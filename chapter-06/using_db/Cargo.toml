@@ -1,0 +1,9 @@
+[package]
+name = "using_db"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fallible-iterator = "0.2.0"
+postgres = "0.19.4"
+sqlite = "0.30.3"
