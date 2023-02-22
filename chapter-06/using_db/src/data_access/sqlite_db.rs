@@ -10,10 +10,43 @@ pub struct SqliteConnection {
 }
 
 impl SqliteConnection {
-    pub fn create(connection_string: &str) -> Self {
-        Self {
-            conn: sqlite::open(connection_string).unwrap(),
-        }
+    fn create_connection(options: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            conn: sqlite::open(options).unwrap(),
+        })
+    }
+
+    fn create_tables(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self.conn.execute(
+            "CREATE TABLE Nations (
+                name TEXT NOT NULL,
+                capital_id INTEGER NULL
+            );
+            CREATE TABLE Towns (
+                name TEXT NOT NULL,
+                lat FLOAT NOT NULL,
+                long FLOAT NOT NULL,
+                nation_id INTEGER NOT NULL
+            );",
+        )?;
+        Ok(())
+    }
+
+    fn truncate_tables(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self
+            .conn
+            .execute("DELETE FROM Nations; DELETE FROM Towns")?;
+        Ok(())
+    }
+
+    fn tables_exist(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+        let mut command = self.conn.prepare(
+            "SELECT COUNT(*)
+            FROM sqlite_master 
+            WHERE type='table' AND name IN ('Nations', 'Towns')",
+        )?;
+        command.next()?;
+        Ok(command.read::<i64, _>(0)? == 2)
     }
 }
 
@@ -52,7 +85,7 @@ macro_rules! impl_IsOptionalNewType {
         $(impl IsNewType for $t {
             fn inner(&self) -> Value {
                 match self.0.clone() {
-                    Some(some) => some.clone().into(),
+                    Some(some) => some.0.into(),
                     None => Value::Null,
                 }
             }
@@ -60,8 +93,9 @@ macro_rules! impl_IsOptionalNewType {
     }
 }
 
-impl_IsNewType!(for NationId, NationName, TownId, TownName, Latitude, Longitude);
-impl_IsOptionalNewType!(for OptionalTownId);
+//impl_IsNewType!(for NationId, NationName, TownId, TownName, Latitude, Longitude);
+impl_IsNewType!(for NationName, TownName, Latitude, Longitude);
+//impl_IsOptionalNewType!(for OptionalTownId);
 
 trait ToValue {
     fn to_value(&self) -> Value;
@@ -76,26 +110,100 @@ where
     }
 }
 
+impl ToValue for NationId {
+    fn to_value(&self) -> Value {
+        match *self {
+            NationId::Serial(n) => (n as i64).into(),
+            NationId::BigSerial(n) => n.into(),
+            _ => 0.into(),
+        }
+    }
+}
+
+impl ToValue for TownId {
+    fn to_value(&self) -> Value {
+        match *self {
+            TownId::Serial(n) => (n as i64).into(),
+            TownId::BigSerial(n) => n.into(),
+            _ => 0.into(),
+        }
+    }
+}
+
+impl ToValue for OptionalTownId {
+    fn to_value(&self) -> Value {
+        match self.0.clone() {
+            Some(town_id) => match town_id {
+                TownId::Serial(n) => (n as i64).into(),
+                TownId::BigSerial(n) => n.into(),
+                _ => 0.into(),
+            },
+            None => Value::Null,
+        }
+    }
+}
+
 impl DbConnection for SqliteConnection {
-    fn init(&mut self) -> Result<(), Box<dyn Error>> {
-        self.conn.execute(
-            "DROP TABLE IF EXISTS Nations;
-            DROP TABLE IF EXISTS Towns;
-            CREATE TABLE Nations (
-                name TEXT NOT NULL,
-                capital_id INTEGER NULL
-            );
-            CREATE TABLE Towns (
-                name TEXT NOT NULL,
-                lat FLOAT NOT NULL,
-                long FLOAT NOT NULL,
-                nation_id INTEGER NOT NULL
-            );",
-        )?;
-        Ok(())
+    fn open_existing(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if !result.tables_exist()? {
+            return Err("Sqlite open_existing: tables missing.".into());
+        }
+        Ok(result)
     }
 
-    fn insert_nation(&mut self, nation: Nation) -> Result<NationId, Box<dyn Error>> {
+    fn open_existing_truncated(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if !result.tables_exist()? {
+            return Err("Sqlite open_existing_truncated: tables missing.".into());
+        }
+        result.truncate_tables();
+        Ok(result)
+    }
+
+    fn create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if result.tables_exist()? {
+            return Err("Sqlite create: tables already exist.".into());
+        }
+        result.create_tables();
+        Ok(result)
+    }
+
+    fn open_or_create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if !result.tables_exist()? {
+            result.create_tables();
+        }
+        Ok(result)
+    }
+
+    fn open_truncated_or_create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if result.tables_exist()? {
+            result.truncate_tables();
+        } else {
+            result.create_tables();
+        }
+        Ok(result)
+    }
+
+    fn insert_nation(&mut self, nation: &Nation) -> Result<NationId, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare(
@@ -105,13 +213,13 @@ impl DbConnection for SqliteConnection {
                     :name, :capital_id
                 ) RETURNING ROWID",
             )?
-            .param(":name", nation.name.to_value())? // rende Value::String(nation.name.0)
-            .param(":capital_id", nation.capital_id.to_value())?; // rende Value::Null o Value::Integer(nation.capital_id.0.unwrap())
+            .param(":name", nation.name.to_value())?
+            .param(":capital_id", nation.capital_id.to_value())?;
         command.next()?;
-        Ok(NationId(command.read(0)?))
+        Ok(NationId::BigSerial(command.read(0)?))
     }
 
-    fn insert_town(&mut self, town: Town) -> Result<TownId, Box<dyn Error>> {
+    fn insert_town(&mut self, town: &Town) -> Result<TownId, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare(
@@ -126,28 +234,28 @@ impl DbConnection for SqliteConnection {
             .param(":long", town.long.to_value())?
             .param(":nation_id", town.nation_id.to_value())?;
         command.next()?;
-        Ok(TownId(command.read(0)?))
+        Ok(TownId::BigSerial(command.read(0)?))
     }
 
-    fn delete_nation(&mut self, id: NationId) -> Result<bool, Box<dyn Error>> {
+    fn delete_nation(&mut self, id: &NationId) -> Result<bool, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare("DELETE FROM Nations WHERE ROWID = :id RETURNING ROWID")?
             .param(":id", id.to_value())?;
         command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
+        Ok(command.read::<i64, _>(0)? == id.to_i64())
     }
 
-    fn delete_town(&mut self, id: TownId) -> Result<bool, Box<dyn Error>> {
+    fn delete_town(&mut self, id: &TownId) -> Result<bool, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare("DELETE FROM Towns WHERE ROWID = :id RETURNING ROWID")?
             .param(":id", id.to_value())?;
         command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
+        Ok(command.read::<i64, _>(0)? == id.to_i64())
     }
 
-    fn update_nation(&mut self, id: NationId, nation: Nation) -> Result<bool, Box<dyn Error>> {
+    fn update_nation(&mut self, id: &NationId, nation: &Nation) -> Result<bool, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare(
@@ -160,10 +268,10 @@ impl DbConnection for SqliteConnection {
             .param(":capital_id", nation.capital_id.to_value())?
             .param(":nation_id", id.to_value())?;
         command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
+        Ok(command.read::<i64, _>(0)? == id.to_i64())
     }
 
-    fn update_town(&mut self, id: TownId, town: Town) -> Result<bool, Box<dyn Error>> {
+    fn update_town(&mut self, id: &TownId, town: &Town) -> Result<bool, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare(
@@ -180,10 +288,10 @@ impl DbConnection for SqliteConnection {
             .param(":nation_id", town.nation_id.to_value())?
             .param(":id", id.to_value())?;
         command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
+        Ok(command.read::<i64, _>(0)? == id.to_i64())
     }
 
-    fn get_nation(&mut self, id: NationId) -> Result<Option<Nation>, Box<dyn Error>> {
+    fn get_nation(&mut self, id: &NationId) -> Result<Option<Nation>, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare(
@@ -195,14 +303,17 @@ impl DbConnection for SqliteConnection {
             Ok(State::Row) => Ok(Some(Nation {
                 name: NationName(command.read("name")?),
                 //capital_id: Some(TownId(command.read::<i64, _>("capital_id")?)),
-                capital_id: OptionalTownId(command.read::<Option<i64>, _>("capital_id")?),
+                capital_id: OptionalTownId(match command.read::<Option<i64>, _>("capital_id")? {
+                    Some(id) => Some(TownId::BigSerial(id)),
+                    None => None,
+                }),
             })),
             Ok(State::Done) => Ok(None),
             Err(e) => Err(Box::new(e)),
         }
     }
 
-    fn get_town(&mut self, id: TownId) -> Result<Option<Town>, Box<dyn Error>> {
+    fn get_town(&mut self, id: &TownId) -> Result<Option<Town>, Box<dyn Error>> {
         let mut command = self
             .conn
             .prepare(
@@ -215,7 +326,7 @@ impl DbConnection for SqliteConnection {
                 name: TownName(command.read("name")?),
                 lat: Latitude(command.read("lat")?),
                 long: Longitude(command.read("long")?),
-                nation_id: NationId(command.read("nation_id")?),
+                nation_id: NationId::BigSerial(command.read("nation_id")?),
             })),
             Ok(State::Done) => Ok(None),
             Err(e) => Err(Box::new(e)),
@@ -224,7 +335,7 @@ impl DbConnection for SqliteConnection {
 
     fn filter_nations_by_name(
         &mut self,
-        name: NationName,
+        name: &NationName,
     ) -> Result<
         Box<dyn Iterator<Item = Result<(NationId, Nation), Box<dyn Error>>> + '_>,
         Box<dyn Error>,
@@ -239,12 +350,12 @@ impl DbConnection for SqliteConnection {
                 .into_iter()
                 .map(move |row| {
                     let row = row.unwrap();
-                    let capital_id = OptionalTownId(match row.try_read("capital_id") {
-                        Ok(value) => Some(value),
-                        Err(_) => None,
+                    let capital_id = OptionalTownId(match row.read("capital_id") {
+                        Some(town_id) => Some(TownId::BigSerial(town_id)),
+                        None => None,
                     });
                     Ok((
-                        NationId(row.read("rowid")),
+                        NationId::BigSerial(row.read("rowid")),
                         Nation {
                             name: NationName(row.read::<&str, _>("name").to_string()),
                             capital_id: capital_id,
@@ -256,7 +367,7 @@ impl DbConnection for SqliteConnection {
 
     fn filter_towns_by_name(
         &mut self,
-        name: TownName,
+        name: &TownName,
     ) -> Result<Box<dyn Iterator<Item = Result<(TownId, Town), Box<dyn Error>>> + '_>, Box<dyn Error>>
     {
         Ok(Box::new(
@@ -270,29 +381,26 @@ impl DbConnection for SqliteConnection {
                 .map(move |row| {
                     let row = row.unwrap();
                     Ok((
-                        TownId(row.read("rowid")),
+                        TownId::BigSerial(row.read("rowid")),
                         Town {
                             name: TownName(row.read::<&str, _>("name").to_string()),
                             lat: Latitude(row.read("lat")),
                             long: Longitude(row.read("long")),
-                            nation_id: NationId(row.read("nation_id")),
+                            nation_id: NationId::BigSerial(row.read("nation_id")),
                         },
                     ))
                 }),
         ))
     }
 
-    /*
     fn filter_towns_by_lat_long(
         &mut self,
-        min_lat: Latitude,
-        max_lat: Latitude,
-        min_long: Longitude,
-        max_long: Longitude,
-    ) -> Result<
-        Box<dyn Iterator<Item = Result<(TownId, Town), Box<dyn Error>>> + '_>,
-        Box<dyn Error>,
-    > {
+        min_lat: &Latitude,
+        max_lat: &Latitude,
+        min_long: &Longitude,
+        max_long: &Longitude,
+    ) -> Result<Box<dyn Iterator<Item = Result<(TownId, Town), Box<dyn Error>>> + '_>, Box<dyn Error>>
+    {
         Ok(Box::new(
             self.conn
                 .prepare(
@@ -308,16 +416,15 @@ impl DbConnection for SqliteConnection {
                 .map(move |row| {
                     let row = row.unwrap();
                     Ok((
-                        TownId(row.read("rowid")),
+                        TownId::BigSerial(row.read("rowid")),
                         Town {
                             name: TownName(row.read::<&str, _>("name").to_string()),
                             lat: Latitude(row.read("lat")),
                             long: Longitude(row.read("long")),
-                            nation_id: NationId(row.read("nation_id")),
+                            nation_id: NationId::BigSerial(row.read("nation_id")),
                         },
                     ))
                 }),
         ))
     }
-    */
 }

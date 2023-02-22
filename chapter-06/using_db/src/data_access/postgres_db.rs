@@ -1,9 +1,31 @@
+/*
+// Look at installed docker images by typing:
+sudo docker images
+
+// Look at existing docker containers by typing:
+sudo docker ps -a
+
+// Download and run a Postgres docker image by typing:
+sudo docker run --name pg-world -e POSTGRES_PASSWORD=myp -p 5432:5432 -d postgres:latest
+
+// To stop a running container
+sudo docker stop {container-id}
+
+// To destroy a stopped docker container
+sudo docker rm {container-id}
+
+// Running a docker shell by typing:
+psql -U postgres -h localhost
+// The password will be asked interactively.
+*/
+
 use crate::data_access::{
     DbConnection, Latitude, Longitude, Nation, NationId, NationName, OptionalTownId, Town, TownId,
     TownName,
 };
 use postgres::{fallible_iterator::FallibleIterator, types::ToSql, Client, NoTls, Row, RowIter};
 
+/*
 fn value_or_null<'a, T: ToSql + Sync + 'a>(n: Option<T>) -> Box<dyn ToSql + Sync + 'a> {
     if let Some(id) = n {
         Box::new(id) as Box<dyn ToSql + Sync + '_>
@@ -11,14 +33,17 @@ fn value_or_null<'a, T: ToSql + Sync + 'a>(n: Option<T>) -> Box<dyn ToSql + Sync
         Box::new(None::<&T>) as Box<dyn ToSql + Sync + '_>
     }
 }
-
-#[derive(Default)]
-pub struct PostgresCreationArgs {
-    username: String,
-    password: String,
-    host: String,
-    port: String,
-    database: String,
+*/
+fn value_or_null(optional_town_id: &OptionalTownId) -> Box<dyn ToSql + Sync> {
+    if let Some(town_id) = optional_town_id.0.clone() {
+        match town_id {
+            TownId::Serial(id) => Box::new(id) as Box<dyn ToSql + Sync + '_>,
+            TownId::BigSerial(id) => Box::new(id) as Box<dyn ToSql + Sync + '_>,
+            TownId::PersyKey(id) => Box::new(0) as Box<dyn ToSql + Sync + '_>,
+        }
+    } else {
+        Box::new(None::<&i64>) as Box<dyn ToSql + Sync + '_>
+    }
 }
 
 pub struct PostgresConnection {
@@ -226,14 +251,15 @@ fn aa() {
 }
 */
 
+/*
 impl PostgresConnection {
-    pub fn create_with_string(connection_string: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open_with_string(connection_string: &str) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             conn: Client::connect(connection_string, NoTls)?,
         })
     }
 
-    pub fn create(options: &PostgresCreationArgs) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn open(options: &PostgresCreationArgs) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             conn: Client::connect(
                 &format!(
@@ -252,6 +278,7 @@ impl PostgresConnection {
         })
     }
 }
+*/
 
 /*
 trait PostgresParam {
@@ -311,12 +338,16 @@ where
 }
 */
 
-impl DbConnection for PostgresConnection {
-    fn init(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+impl PostgresConnection {
+    fn create_connection(options: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            conn: Client::connect(options, NoTls)?,
+        })
+    }
+
+    fn create_tables(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let _ = self.conn.batch_execute(
-            "DROP TABLE IF EXISTS Nations;
-            DROP TABLE IF EXISTS Towns;
-            CREATE TABLE Nations (
+            "CREATE TABLE Nations (
                 rowid BIGSERIAL PRIMARY KEY,
                 name VARCHAR(40) NOT NULL,
                 capital_id BIGINT NULL
@@ -332,62 +363,157 @@ impl DbConnection for PostgresConnection {
         Ok(())
     }
 
-    fn insert_nation(&mut self, nation: Nation) -> Result<NationId, Box<dyn std::error::Error>> {
+    fn truncate_tables(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self
+            .conn
+            .batch_execute("TRUNCATE Nations, Towns RESTART IDENTITY;")?;
+        Ok(())
+    }
+
+    fn tables_exist(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(self
+            .conn
+            .query_opt(
+                "SELECT COUNT(*) FROM pg_tables
+                WHERE schemaname = 'public'
+                AND tablename IN ('nations', 'towns')",
+                &[],
+            )?
+            .ok_or(String::from("Postgresql tables_exists: internal error."))?
+            .get::<_, i64>(0)
+            == 2)
+    }
+}
+
+impl DbConnection for PostgresConnection {
+    fn open_existing(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if !result.tables_exist()? {
+            return Err("Postgresql open_existing: tables missing.".into());
+        }
+        Ok(result)
+    }
+
+    fn open_existing_truncated(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if !result.tables_exist()? {
+            return Err("Postgresql open_existing_truncated: tables missing.".into());
+        }
+        result.truncate_tables();
+        Ok(result)
+    }
+
+    fn create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if result.tables_exist()? {
+            return Err("Postgresql create: tables already exist.".into());
+        }
+        result.create_tables();
+        Ok(result)
+    }
+
+    fn open_or_create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if !result.tables_exist()? {
+            result.create_tables();
+        }
+        Ok(result)
+    }
+
+    fn open_truncated_or_create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized,
+    {
+        let mut result = Self::create_connection(options)?;
+        if result.tables_exist()? {
+            result.truncate_tables();
+        } else {
+            result.create_tables();
+        }
+        Ok(result)
+    }
+
+    fn insert_nation(&mut self, nation: &Nation) -> Result<NationId, Box<dyn std::error::Error>> {
         let result = self.conn.query_one(
             "INSERT INTO Nations (
                 name, capital_id
             ) VALUES (
                 $1, $2
             ) RETURNING rowid",
-            &[&nation.name.0, &*value_or_null(nation.capital_id.0)],
+            &[&nation.name.0, &*value_or_null(&nation.capital_id)],
         )?;
-        Ok(NationId(result.get(0)))
+        Ok(NationId::BigSerial(result.get(0)))
     }
 
-    fn insert_town(&mut self, town: Town) -> Result<TownId, Box<dyn std::error::Error>> {
+    fn insert_town(&mut self, town: &Town) -> Result<TownId, Box<dyn std::error::Error>> {
         let result = self.conn.query_one(
             "INSERT INTO Towns (
                 name, lat, long, nation_id
             ) VALUES (
                 $1, $2, $3, $4
             ) RETURNING rowid",
-            &[&town.name.0, &town.lat.0, &town.long.0, &town.nation_id.0],
+            &[
+                &town.name.0,
+                &town.lat.0,
+                &town.long.0,
+                &town.nation_id.to_i64(),
+            ],
         )?;
-        Ok(TownId(result.get(0)))
+        Ok(TownId::BigSerial(result.get(0)))
     }
 
-    fn delete_nation(&mut self, id: NationId) -> Result<bool, Box<dyn std::error::Error>> {
+    fn delete_nation(&mut self, id: &NationId) -> Result<bool, Box<dyn std::error::Error>> {
         let deleted_lines = self.conn.execute(
             "DELETE FROM Nations WHERE rowid = $1 RETURNING rowid",
-            &[&id.0],
+            &[&id.to_i64()],
         )?;
         Ok(deleted_lines == 1)
     }
 
-    fn delete_town(&mut self, id: TownId) -> Result<bool, Box<dyn std::error::Error>> {
+    fn delete_town(&mut self, id: &TownId) -> Result<bool, Box<dyn std::error::Error>> {
         let deleted_lines = self.conn.execute(
             "DELETE FROM Towns WHERE rowid = $1 RETURNING rowid",
-            &[&id.0],
+            &[&id.to_i64()],
         )?;
         Ok(deleted_lines == 1)
     }
 
     fn update_nation(
         &mut self,
-        id: NationId,
-        nation: Nation,
+        id: &NationId,
+        nation: &Nation,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let updated_lines = self.conn.execute(
             "UPDATE Nations SET
                 name = $2,
                 capital_id = $3
             WHERE rowid = $1",
-            &[&id.0, &nation.name.0, &*value_or_null(nation.capital_id.0)],
+            &[
+                &id.to_i64(),
+                &nation.name.0,
+                &*value_or_null(&nation.capital_id),
+            ],
         )?;
         Ok(updated_lines == 1)
     }
 
-    fn update_town(&mut self, id: TownId, town: Town) -> Result<bool, Box<dyn std::error::Error>> {
+    fn update_town(
+        &mut self,
+        id: &TownId,
+        town: &Town,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
         let updated_lines = self.conn.execute(
             "UPDATE Towns SET
                 name = $2,
@@ -396,44 +522,47 @@ impl DbConnection for PostgresConnection {
                 nation_id = $5
                 WHERE rowid = $1",
             &[
-                &id.0,
+                &id.to_i64(),
                 &town.name.0,
                 &town.lat.0,
                 &town.long.0,
-                &town.nation_id.0,
+                &town.nation_id.to_i64(),
             ],
         )?;
         Ok(updated_lines == 1)
     }
 
-    fn get_nation(&mut self, id: NationId) -> Result<Option<Nation>, Box<dyn std::error::Error>> {
+    fn get_nation(&mut self, id: &NationId) -> Result<Option<Nation>, Box<dyn std::error::Error>> {
         Ok(
             match self.conn.query_opt(
                 "SELECT * FROM Nations
                 WHERE rowid = $1",
-                &[&id.0],
+                &[&id.to_i64()],
             )? {
                 Some(result) => Some(Nation {
                     name: NationName(result.get("name")),
-                    capital_id: OptionalTownId(result.get("capital_id")),
+                    capital_id: OptionalTownId(match result.get("capital_id") {
+                        Some(id) => Some(TownId::BigSerial(id)),
+                        None => None,
+                    }),
                 }),
                 None => None,
             },
         )
     }
 
-    fn get_town(&mut self, id: TownId) -> Result<Option<Town>, Box<dyn std::error::Error>> {
+    fn get_town(&mut self, id: &TownId) -> Result<Option<Town>, Box<dyn std::error::Error>> {
         Ok(
             match self.conn.query_opt(
                 "SELECT * FROM Towns
                 WHERE rowid = $1",
-                &[&id.0],
+                &[&id.to_i64()],
             )? {
                 Some(result) => Some(Town {
                     name: TownName(result.get("name")),
                     lat: Latitude(result.get("lat")),
                     long: Longitude(result.get("long")),
-                    nation_id: NationId(result.get("nation_id")),
+                    nation_id: NationId::BigSerial(result.get("nation_id")),
                 }),
                 None => None,
             },
@@ -456,24 +585,27 @@ impl DbConnection for PostgresConnection {
 
     fn filter_nations_by_name(
         &mut self,
-        name: NationName,
+        name: &NationName,
     ) -> Result<
         Box<dyn Iterator<Item = Result<(NationId, Nation), Box<dyn std::error::Error>>> + '_>,
         Box<dyn std::error::Error>,
     > {
         let it = self.conn.query_raw(
             "SELECT rowid, name, capital_id FROM Nations
-                    WHERE name = $1",
-            [name.0].iter(),
+            WHERE name = $1",
+            [name.0.clone()].iter(),
         );
         match it {
             Ok(row_iter) => Ok(Box::new(row_iter_to_row_iterator(row_iter).map(
                 |row_error: Result<Row, postgres::Error>| match row_error {
                     Ok(row) => Ok((
-                        NationId(row.get("rowid")),
+                        NationId::BigSerial(row.get("rowid")),
                         Nation {
                             name: NationName(row.get("name")),
-                            capital_id: OptionalTownId(row.get("capital_id")),
+                            capital_id: OptionalTownId(match row.get("capital_id") {
+                                Some(id) => Some(TownId::BigSerial(id)),
+                                None => None,
+                            }),
                         },
                     )),
                     Err(error) => Err(Box::new(error) as Box<dyn std::error::Error>),
@@ -485,7 +617,7 @@ impl DbConnection for PostgresConnection {
 
     fn filter_towns_by_name(
         &mut self,
-        name: TownName,
+        name: &TownName,
     ) -> Result<
         Box<dyn Iterator<Item = Result<(TownId, Town), Box<dyn std::error::Error>>> + '_>,
         Box<dyn std::error::Error>,
@@ -493,18 +625,18 @@ impl DbConnection for PostgresConnection {
         let it = self.conn.query_raw(
             "SELECT rowid, name, lat, long, nation_id FROM Towns
             WHERE name = $1",
-            [name.0].iter(),
+            [name.0.clone()].iter(),
         );
         match it {
             Ok(row_iter) => Ok(Box::new(row_iter_to_row_iterator(row_iter).map(
                 |row_error: Result<Row, postgres::Error>| match row_error {
                     Ok(row) => Ok((
-                        TownId(row.get("rowid")),
+                        TownId::BigSerial(row.get("rowid")),
                         Town {
                             name: TownName(row.get("name")),
                             lat: Latitude(row.get("lat")),
                             long: Longitude(row.get("long")),
-                            nation_id: NationId(row.get("nation_id")),
+                            nation_id: NationId::BigSerial(row.get("nation_id")),
                         },
                     )),
                     Err(error) => Err(Box::new(error) as Box<dyn std::error::Error>),
@@ -514,76 +646,41 @@ impl DbConnection for PostgresConnection {
         }
     }
 
-    /*
     fn filter_towns_by_lat_long(
         &mut self,
-        min_lat: Latitude,
-        max_lat: Latitude,
-        min_long: Longitude,
-        max_long: Longitude,
+        min_lat: &Latitude,
+        max_lat: &Latitude,
+        min_long: &Longitude,
+        max_long: &Longitude,
     ) -> Result<
         Box<dyn Iterator<Item = Result<(TownId, Town), Box<dyn std::error::Error>>> + '_>,
         Box<dyn std::error::Error>,
     > {
-        let mut it = self.conn.query_raw(
+        let it = self.conn.query_raw(
             "SELECT rowid, name, lat, long, nation_id FROM Towns
             WHERE $1 <= lat AND lat <= $2
             AND $3 <= long AND long <= $4",
             [min_lat.0, max_lat.0, min_long.0, max_long.0].iter(),
-        )?;
-        Ok(Box::new(fallible_to_iterator2(it).map(|row| {
-            Ok((
-                TownId(row.unwrap().get("rowid")),
-                Town {
-                    name: TownName(row.unwrap().get("name")),
-                    lat: Latitude(row.unwrap().get("lat")),
-                    long: Longitude(row.unwrap().get("long")),
-                    nation_id: NationId(row.unwrap().get("nation_id")),
+        );
+        match it {
+            Ok(row_iter) => Ok(Box::new(row_iter_to_row_iterator(row_iter).map(
+                |row_error: Result<Row, postgres::Error>| match row_error {
+                    Ok(row) => Ok((
+                        TownId::BigSerial(row.get("rowid")),
+                        Town {
+                            name: TownName(row.get("name")),
+                            lat: Latitude(row.get("lat")),
+                            long: Longitude(row.get("long")),
+                            nation_id: NationId::BigSerial(row.get("nation_id")),
+                        },
+                    )),
+                    Err(error) => Err(Box::new(error) as Box<dyn std::error::Error>),
                 },
-            ))
-        })))
-    }
-    */
-}
-
-/*
-struct IteratorOnFallible<I, E> {
-    fallible: Box<dyn FallibleIterator<Item = I, Error = E>>,
-}
-
-impl<I, E> Iterator for IteratorOnFallible<I, E> {
-    type Item = Result<I, E>;
-    fn next(&mut self) -> Option<<Self as std::iter::Iterator>::Item> {
-        match self.fallible.next() {
-            Ok(Some(item)) => Some(Ok(item)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
+            ))),
+            Err(error) => Err(Box::new(error)),
         }
     }
 }
-
-fn fallible_to_iterator1<I, E>(
-    fallible: Box<dyn FallibleIterator<Item = I, Error = E>>,
-) -> IteratorOnFallible<I, E> {
-    IteratorOnFallible::<I, E> { fallible }
-}
-*/
-/*
-struct IteratorOnFallible<'a, I, E> {
-    fallible: &'a dyn FallibleIterator<Item = I, Error = E>,
-}
-
-impl<'a, I, E> Iterator for IteratorOnFallible<'a, I, E> {
-    type Item = Result<I, E>;
-    fn next(&mut self) -> Option<<Self as std::iter::Iterator>::Item> {
-        match self.fallible.next() {
-            Ok(Some(item)) => Some(Ok(item)),
-            Ok(None) => None,
-            Err(err) => Some(Err(err)),
-        }
-    }
-}
-*/
 
 struct RowIterator<'a> {
     row_iter: RowIter<'a>,
