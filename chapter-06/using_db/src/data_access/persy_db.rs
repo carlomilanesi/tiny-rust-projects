@@ -13,8 +13,7 @@ pub fn open(filename: &str) -> Result<Persy, Box<dyn std::error::Error>> {
         tx.create_segment("seg")?;
 
         //Commit the tx.
-        let prepared = tx.prepare()?;
-        prepared.commit()?;
+        tx.prepare()?.commit()?;
         println!("Initialized",);
         Ok(())
     })?;
@@ -33,8 +32,7 @@ pub fn insert(persy: &Persy) -> Result<PersyId, Box<dyn std::error::Error>> {
     let id = tx.insert("seg", &data)?;
 
     //Commit the tx.
-    let prepared = tx.prepare()?;
-    prepared.commit()?;
+    tx.prepare()?.commit()?;
 
     Ok(id)
 }
@@ -62,8 +60,7 @@ pub fn update(persy: &Persy, update_id: PersyId) -> Result<(), Box<dyn std::erro
     // Update the record with new data
     tx.update("seg", &update_id, &new_data)?;
     //Commit the tx.
-    let prepared = tx.prepare()?;
-    prepared.commit()?;
+    tx.prepare()?.commit()?;
     Ok(())
 }
 
@@ -74,111 +71,92 @@ pub fn delete(persy: &Persy, delete_id: PersyId) -> Result<(), Box<dyn std::erro
     // delete the record
     tx.delete("seg", &delete_id)?;
     //Commit the tx.
-    let prepared = tx.prepare()?;
-    prepared.commit()?;
+    tx.prepare()?.commit()?;
     Ok(())
 }
 */
 
 //-------------------------------------------------------------------------------------
+/*
+There is the trait `DbConnection`, containing several function signatures, including `insert_nation`.
+This trait must be implemented by several types: `MockDbConnection`, `SqliteConnection`, `PostgresConnection`, `PersyConnection`.
+So, each of them must implement the function `insert_nation`.
+Without changing the trait `DbConnection` nor its implementation for type different from `PersyConnection`, we want specify that
+an implementation of `DbConnection` for `PersyConnection` must use a specified type.
+an implementation of  the By changing
+
+ for PersyConnection<'_, Serder> {
+
+*/
+
 use crate::data_access::{
     DbConnection, Latitude, Longitude, Nation, NationId, NationName, OptionalTownId, Town, TownId,
     TownName,
 };
-use std::error::Error;
+use std::{error::Error, str::FromStr};
 
-pub struct PersyConnection {
-    conn: Persy,
+use serde::{Deserialize, Serialize};
+
+pub trait Serder {
+    fn serialize<T: serde::Serialize>(obj: &T) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+
+    fn deserialize<'de, T: serde::Deserialize<'de>>(
+        buffer: &'de [u8],
+    ) -> Result<T, Box<dyn std::error::Error>>;
 }
 
-impl PersyConnection {}
+pub struct BincodeSerder;
 
-/*
-trait PersyParam {
-    fn param(self, name: &str, value: Value) -> Result<Self, Box<dyn Error>>
-    where
-        Self: Sized;
-}
+impl Serder for BincodeSerder {
+    fn serialize<T: serde::Serialize>(obj: &T) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(bincode::serialize(obj)?)
+    }
 
-impl PersyParam for Statement<'_> {
-    fn param(mut self, name: &str, value: Value) -> Result<Self, Box<dyn Error>>
-    where
-        Self: Sized,
-    {
-        self.bind((name, value))?;
-        Ok(self)
+    fn deserialize<'de, T: serde::Deserialize<'de>>(
+        buffer: &'de [u8],
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        Ok(bincode::deserialize(buffer)?)
     }
 }
 
-trait IsNewType {
-    fn inner(&self) -> Value;
-}
+pub struct JsonSerder;
 
-macro_rules! impl_IsNewType {
-    (for $($t:ty),+) => {
-        $(impl IsNewType for $t {
-            fn inner(&self) -> Value {
-                self.0.clone().into()
-            }
-        })*
+impl Serder for JsonSerder {
+    fn serialize<T: serde::Serialize>(obj: &T) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(serde_json::to_vec(obj)?)
+    }
+
+    fn deserialize<'de, T: serde::Deserialize<'de>>(
+        buffer: &'de [u8],
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_slice(buffer)?)
     }
 }
 
-macro_rules! impl_IsOptionalNewType {
-    (for $($t:ty),+) => {
-        $(impl IsNewType for $t {
-            fn inner(&self) -> Value {
-                match self.0.clone() {
-                    Some(some) => some.clone().into(),
-                    None => Value::Null,
-                }
-            }
-        })*
-    }
-}
-
-impl_IsNewType!(for NationId, NationName, TownId, TownName, Latitude, Longitude);
-impl_IsOptionalNewType!(for OptionalTownId);
-
-trait ToValue {
-    fn to_value(&self) -> Value;
-}
-
-impl<T> ToValue for T
+pub struct PersyConnection<S>
 where
-    T: IsNewType,
+    S: Serder,
 {
-    fn to_value(&self) -> Value {
-        self.inner()
+    conn: Persy,
+    phantom: std::marker::PhantomData<S>,
+}
+
+impl<S> PersyConnection<S>
+where
+    S: Serder,
+{
+    fn new(db: Persy) -> Self {
+        Self {
+            conn: db,
+            phantom: std::marker::PhantomData::<S>,
+        }
     }
 }
-*/
 
-fn segments_exist(db: &Persy) -> Result<bool, Box<dyn std::error::Error>> {
-    Ok(db.exists_segment("Nations")? && db.exists_segment("Towns")?)
-}
-
-fn create_segments(db: &Persy) -> Result<(), Box<dyn std::error::Error>> {
-    let mut tx = db.begin()?;
-    tx.create_segment("Nations")?;
-    tx.create_segment("Towns")?;
-    let prepared = tx.prepare()?;
-    prepared.commit()?;
-    Ok(())
-}
-
-fn truncate_segments(db: &Persy) -> Result<(), Box<dyn std::error::Error>> {
-    let mut tx = db.begin()?;
-    tx.drop_segment("Nations")?;
-    tx.drop_segment("Towns")?;
-    tx.create_segment("Nations")?;
-    tx.create_segment("Towns")?;
-    let prepared = tx.prepare()?;
-    prepared.commit()?;
-    Ok(())
-}
-
-impl DbConnection for PersyConnection {
+impl<S> DbConnection for PersyConnection<S>
+where
+    S: Serder,
+{
     fn open_existing(options: &str) -> Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized,
@@ -187,7 +165,7 @@ impl DbConnection for PersyConnection {
         if !segments_exist(&db)? {
             return Err("Persy open_existing: segments missing.".into());
         }
-        Ok(PersyConnection { conn: db })
+        Ok(PersyConnection::new(db))
     }
 
     fn open_existing_truncated(options: &str) -> Result<Self, Box<dyn std::error::Error>>
@@ -199,7 +177,7 @@ impl DbConnection for PersyConnection {
             return Err("Persy open_existing_truncated: segments missing.".into());
         }
         truncate_segments(&mut db)?;
-        Ok(PersyConnection { conn: db })
+        Ok(PersyConnection::new(db))
     }
 
     fn create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
@@ -213,7 +191,7 @@ impl DbConnection for PersyConnection {
             create_segments(&persy)?;
             Ok(())
         })?;
-        Ok(PersyConnection { conn: db })
+        Ok(PersyConnection::new(db))
     }
 
     fn open_or_create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
@@ -224,7 +202,7 @@ impl DbConnection for PersyConnection {
         if !segments_exist(&db)? {
             create_segments(&db)?;
         }
-        Ok(PersyConnection { conn: db })
+        Ok(PersyConnection::new(db))
     }
 
     fn open_truncated_or_create(options: &str) -> Result<Self, Box<dyn std::error::Error>>
@@ -237,93 +215,69 @@ impl DbConnection for PersyConnection {
         } else {
             create_segments(&db)?;
         }
-        Ok(PersyConnection { conn: db })
+        Ok(PersyConnection::new(db))
     }
 
     fn insert_nation(&mut self, nation: &Nation) -> Result<NationId, Box<dyn Error>> {
         let mut tx = self.conn.begin()?;
-        //let data = serde_json::to_vec(&nation)?;
-        let data = bincode::serialize(&nation)?;
+        let data = S::serialize(&nation)?;
         let id = tx.insert("Nations", &data)?;
-        let prepared = tx.prepare()?;
-        prepared.commit()?;
+        tx.prepare()?.commit()?;
         Ok(NationId::PersyKey(id.to_string()))
     }
 
     fn insert_town(&mut self, town: &Town) -> Result<TownId, Box<dyn Error>> {
         let mut tx = self.conn.begin()?;
-        //let data = serde_json::to_vec(&town)?;
-        let data = bincode::serialize(&town)?;
+        let data = S::serialize(&town)?;
         let id = tx.insert("Towns", &data)?;
-        let prepared = tx.prepare()?;
-        prepared.commit()?;
+        tx.prepare()?.commit()?;
         Ok(TownId::PersyKey(id.to_string()))
     }
 
     fn delete_nation(&mut self, id: &NationId) -> Result<bool, Box<dyn Error>> {
-        /*
-        let mut command = self
-            .conn
-            .prepare("DELETE FROM Nations WHERE ROWID = :id RETURNING ROWID")?
-            .param(":id", id.to_value())?;
-        command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
-        */
-        Ok(false)
+        let mut tx = self.conn.begin()?;
+        let mut success = false;
+        if let NationId::PersyKey(key) = id {
+            success = tx.delete("Nations", &PersyId::from_str(key)?).is_ok();
+            tx.prepare()?.commit()?;
+        }
+        Ok(success)
     }
 
     fn delete_town(&mut self, id: &TownId) -> Result<bool, Box<dyn Error>> {
-        /*
-        let mut command = self
-            .conn
-            .prepare("DELETE FROM Towns WHERE ROWID = :id RETURNING ROWID")?
-            .param(":id", id.to_value())?;
-        command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
-        */
-        Ok(false)
+        let mut tx = self.conn.begin()?;
+        let mut success = false;
+        if let TownId::PersyKey(key) = id {
+            success = tx.delete("Towns", &PersyId::from_str(key)?).is_ok();
+            tx.prepare()?.commit()?;
+        }
+        Ok(success)
     }
 
     fn update_nation(&mut self, id: &NationId, nation: &Nation) -> Result<bool, Box<dyn Error>> {
-        /*
-        let mut command = self
-            .conn
-            .prepare(
-                "UPDATE Nations SET
-                    name = :name,
-                    capital_id = :capital_id
-                WHERE ROWID = :nation_id RETURNING ROWID",
-            )?
-            .param(":name", nation.name.to_value())?
-            .param(":capital_id", nation.capital_id.to_value())?
-            .param(":nation_id", id.to_value())?;
-        command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
-        */
-        Ok(false)
+        let mut tx = self.conn.begin()?;
+        let new_data = S::serialize(nation)?;
+        let mut success = false;
+        if let NationId::PersyKey(key) = id {
+            success = tx
+                .update("Nations", &PersyId::from_str(key)?, &new_data)
+                .is_ok();
+            tx.prepare()?.commit()?;
+        }
+        Ok(success)
     }
 
     fn update_town(&mut self, id: &TownId, town: &Town) -> Result<bool, Box<dyn Error>> {
-        /*
-        let mut command = self
-            .conn
-            .prepare(
-                "UPDATE Towns SET
-                    name = :name,
-                    lat = :lat,
-                    long = :long,
-                    nation_id = :nation_id
-                WHERE ROWID = :id RETURNING ROWID",
-            )?
-            .param(":name", town.name.to_value())?
-            .param(":lat", town.lat.to_value())?
-            .param(":long", town.long.to_value())?
-            .param(":nation_id", town.nation_id.to_value())?
-            .param(":id", id.to_value())?;
-        command.next()?;
-        Ok(command.read::<i64, _>(0)? == id.0)
-        */
-        Ok(false)
+        let mut tx = self.conn.begin()?;
+        let new_data = S::serialize(town)?;
+        let mut success = false;
+        if let TownId::PersyKey(key) = id {
+            success = tx
+                .update("Towns", &PersyId::from_str(key)?, &new_data)
+                .is_ok();
+            tx.prepare()?.commit()?;
+        }
+        Ok(success)
     }
 
     fn get_nation(&mut self, id: &NationId) -> Result<Option<Nation>, Box<dyn Error>> {
@@ -333,8 +287,7 @@ impl DbConnection for PersyConnection {
                 .scan("Nations")?
                 .into_iter()
                 .filter_map(move |(k, v)| {
-                    //let nation: Nation = serde_json::from_slice(&v).unwrap();
-                    let nation: Nation = bincode::deserialize(&v).unwrap();
+                    let nation = S::deserialize::<Nation>(v.as_slice()).unwrap();
                     if *id == k.to_string() {
                         Some(nation)
                     } else {
@@ -354,8 +307,7 @@ impl DbConnection for PersyConnection {
                 .scan("Towns")?
                 .into_iter()
                 .filter_map(move |(k, v)| {
-                    //let town: Town = serde_json::from_slice(&v).unwrap();
-                    let town: Town = bincode::deserialize(&v).unwrap();
+                    let town: Town = S::deserialize(v.as_slice()).unwrap();
                     if *id == k.to_string() {
                         Some(town)
                     } else {
@@ -378,8 +330,7 @@ impl DbConnection for PersyConnection {
         let name = name.clone();
         Ok(Box::new(self.conn.scan("Nations")?.into_iter().filter_map(
             move |(k, v)| {
-                //let nation: Nation = serde_json::from_slice(&v).unwrap();
-                let nation: Nation = bincode::deserialize(&v).unwrap();
+                let nation: Nation = S::deserialize(v.as_slice()).unwrap();
                 if name == nation.name {
                     Some(Ok((NationId::PersyKey(k.to_string()), nation)))
                 } else {
@@ -397,8 +348,7 @@ impl DbConnection for PersyConnection {
         let name = name.clone();
         Ok(Box::new(self.conn.scan("Towns")?.into_iter().filter_map(
             move |(k, v)| {
-                //let town: Town = serde_json::from_slice(&v).unwrap();
-                let town: Town = bincode::deserialize(&v).unwrap();
+                let town: Town = S::deserialize(v.as_slice()).unwrap();
                 if name == town.name {
                     Some(Ok((TownId::PersyKey(k.to_string()), town)))
                 } else {
@@ -422,8 +372,8 @@ impl DbConnection for PersyConnection {
         let max_long = max_long.clone();
         Ok(Box::new(self.conn.scan("Towns")?.into_iter().filter_map(
             move |(k, v)| {
-                //let town: Town = serde_json::from_slice(&v).unwrap();
-                let town: Town = bincode::deserialize(&v).unwrap();
+                let town: Town = S::deserialize(v.as_slice()).unwrap();
+
                 if min_lat <= town.lat
                     && town.lat <= max_lat
                     && min_long <= town.long
@@ -436,4 +386,26 @@ impl DbConnection for PersyConnection {
             },
         )))
     }
+}
+
+fn segments_exist(db: &Persy) -> Result<bool, Box<dyn std::error::Error>> {
+    Ok(db.exists_segment("Nations")? && db.exists_segment("Towns")?)
+}
+
+fn create_segments(db: &Persy) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = db.begin()?;
+    tx.create_segment("Nations")?;
+    tx.create_segment("Towns")?;
+    tx.prepare()?.commit()?;
+    Ok(())
+}
+
+fn truncate_segments(db: &Persy) -> Result<(), Box<dyn std::error::Error>> {
+    let mut tx = db.begin()?;
+    tx.drop_segment("Nations")?;
+    tx.drop_segment("Towns")?;
+    tx.create_segment("Nations")?;
+    tx.create_segment("Towns")?;
+    tx.prepare()?.commit()?;
+    Ok(())
 }

@@ -9,74 +9,79 @@ use data_access::{
 };
 use std::error::Error;
 
-use crate::data_access::persy_db::PersyConnection;
+use crate::data_access::persy_db::{BincodeSerder, JsonSerder, PersyConnection};
 use crate::data_access::postgres_db::PostgresConnection;
 use crate::data_access::sqlite_db::SqliteConnection;
 use crate::data_access::OptionalTownId;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    /*
-    let bergamo = Town {
-        name: TownName("Bergamo".to_string()),
-        lat: Latitude(12.34),
-        long: Longitude(-4.567),
-        nation_id: NationId::BigSerial(189),
-    };
-    serde_json(&bergamo);
-    serde_postcard(&bergamo);
-    serde_messagepack(&bergamo);
-    serde_bson(&bergamo);
-    //serde_dbus(&bergamo);
-    serde_bincode(&bergamo);
-    */
-    /*
-    let db = open("world.persy")?;
-    let id = insert(&db)?;
-    scan(&db)?;
-    update(&db, id)?;
-    delete(&db, id)?;
-    */
-
-    // /*
     println!("****** Using a mock DB ******");
     let mock_start = Instant::now();
-    let mut db1 = MockDbConnection::open_truncated_or_create("")?;
-    let mock_creation = mock_start.elapsed();
-    process_world(&mut db1)?;
+    let mock_creation;
+    {
+        let mut mock_db = MockDbConnection::open_truncated_or_create("")?;
+        mock_creation = mock_start.elapsed();
+        process_world(&mut mock_db)?;
+    }
     let mock_query = mock_start.elapsed() - mock_creation;
 
     println!();
     println!("****** Using a memory SQLite DB ******");
     let memory_sqlite_start = Instant::now();
-    let mut db2 = SqliteConnection::open_truncated_or_create(":memory:")?;
-    let memory_sqlite_creation = memory_sqlite_start.elapsed();
-    process_world(&mut db2)?;
+    let memory_sqlite_creation;
+    {
+        let mut memory_sqlite_db = SqliteConnection::open_truncated_or_create(":memory:")?;
+        memory_sqlite_creation = memory_sqlite_start.elapsed();
+        process_world(&mut memory_sqlite_db)?;
+    }
     let memory_sqlite_query = memory_sqlite_start.elapsed() - memory_sqlite_creation;
 
     println!();
     println!("****** Using a persistent SQLite DB ******");
     let storage_sqlite_start = Instant::now();
-    let mut db3 = SqliteConnection::open_truncated_or_create("world.db")?;
-    let storage_sqlite_creation = storage_sqlite_start.elapsed();
-    process_world(&mut db3)?;
+    let storage_sqlite_creation;
+    {
+        let mut storage_sqlite_db = SqliteConnection::open_truncated_or_create("world.db")?;
+        storage_sqlite_creation = storage_sqlite_start.elapsed();
+        process_world(&mut storage_sqlite_db)?;
+    }
     let storage_sqlite_query = storage_sqlite_start.elapsed() - storage_sqlite_creation;
 
     println!();
     println!("****** Using a persistent Postgresql DB ******");
     let postgresql_start = Instant::now();
-    let mut db4 =
-        PostgresConnection::open_truncated_or_create("postgres://postgres:myp@localhost")?;
-    let postgresql_creation = postgresql_start.elapsed();
-    process_world(&mut db4)?;
+    let postgresql_creation;
+    {
+        let mut postgresql_db =
+            PostgresConnection::open_truncated_or_create("postgres://postgres:myp@localhost")?;
+        postgresql_creation = postgresql_start.elapsed();
+        process_world(&mut postgresql_db)?;
+    }
     let postgresql_query = postgresql_start.elapsed() - postgresql_creation;
 
     println!();
-    println!("****** Using a persistent Persy DB ******");
-    let persy_start = Instant::now();
-    let mut db5 = PersyConnection::open_truncated_or_create("world.persy")?;
-    let persy_creation = persy_start.elapsed();
-    process_world(&mut db5)?;
-    let persy_query = persy_start.elapsed() - persy_creation;
+    println!("****** Using a persistent Persy DB with Bincode serialization ******");
+    let persy_bincode_start = Instant::now();
+    let persy_bincode_creation;
+    {
+        let mut persy_bincode_db =
+            PersyConnection::<BincodeSerder>::open_truncated_or_create("world.persy")?;
+        persy_bincode_creation = persy_bincode_start.elapsed();
+        process_world(&mut persy_bincode_db)?;
+    }
+    let persy_bincode_query = persy_bincode_start.elapsed() - persy_bincode_creation;
+
+    println!();
+    println!("****** Using a persistent Persy DB with JSON serialization******");
+    let persy_json_start = Instant::now();
+    let persy_json_creation;
+    {
+        let mut persy_json_db =
+            PersyConnection::<JsonSerder>::open_truncated_or_create("world.persy")?;
+        persy_json_creation = persy_json_start.elapsed();
+        process_world(&mut persy_json_db)?;
+    }
+    let persy_json_query = persy_json_start.elapsed() - persy_json_creation;
 
     eprintln!(
         "Mock: {}, {}",
@@ -99,11 +104,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         postgresql_query.as_micros()
     );
     eprintln!(
-        "Persy: {}, {}",
-        persy_creation.as_micros(),
-        persy_query.as_micros()
+        "Persy Bincode: {}, {}",
+        persy_bincode_creation.as_micros(),
+        persy_bincode_query.as_micros()
     );
-    // */
+    eprintln!(
+        "Persy Json: {}, {}",
+        persy_json_creation.as_micros(),
+        persy_json_query.as_micros()
+    );
     Ok(())
 }
 
@@ -123,6 +132,9 @@ fn process_world(db: &mut dyn DbConnection) -> Result<(), Box<dyn Error>> {
     };
 
     // Inserting nations
+    for _ in 0..1_000 {
+        db.insert_nation(&france)?;
+    }
     let france_id = db.insert_nation(&france)?;
     println!("Inserted {} {}", france_id, france.name.0);
     let uk_id = db.insert_nation(&uk)?;

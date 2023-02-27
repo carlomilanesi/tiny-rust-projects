@@ -13,6 +13,7 @@ pub enum NationId {
     BigSerial(i64),
     PersyKey(String),
 }
+
 impl NationId {
     fn increment(&mut self) {
         match self {
